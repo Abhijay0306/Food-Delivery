@@ -249,7 +249,11 @@ async def list_kitchens(lat: Optional[float] = None, lng: Optional[float] = None
             {"name": {"$regex": search, "$options": "i"}},
             {"cuisine_types": {"$regex": search, "$options": "i"}}
         ]
-    kitchens = await db.kitchens.find(query).to_list(100)
+    kitchens = await db.kitchens.find(query, {
+        "name": 1, "description": 1, "address": 1, "lat": 1, "lng": 1,
+        "cuisine_types": 1, "image_url": 1, "is_open": 1, "rating": 1,
+        "total_orders": 1, "owner_id": 1
+    }).to_list(100)
     results = []
     for k in kitchens:
         k = doc_to_dict(k)
@@ -378,17 +382,25 @@ async def create_order(req: OrderCreate, request: Request):
         raise HTTPException(404, "Kitchen not found")
     if not kitchen.get("is_open", True):
         raise HTTPException(400, "Kitchen is currently closed")
+    # Batch fetch all menu items in one query (avoid N+1)
+    menu_item_ids = [ObjectId(item["menu_item_id"]) for item in req.items]
+    menu_items_cursor = await db.menu_items.find(
+        {"_id": {"$in": menu_item_ids}},
+        {"name": 1, "price": 1, "image_url": 1, "is_available": 1}
+    ).to_list(len(menu_item_ids))
+    menu_items_map = {str(mi["_id"]): mi for mi in menu_items_cursor}
+
     order_items = []
     total = 0.0
     for item in req.items:
-        mi = await db.menu_items.find_one({"_id": ObjectId(item["menu_item_id"])})
+        mi = menu_items_map.get(item["menu_item_id"])
         if not mi:
             raise HTTPException(404, f"Menu item not found")
         if not mi.get("is_available", True):
             raise HTTPException(400, f"{mi['name']} is not available")
         qty = max(1, int(item.get("quantity", 1)))
         order_items.append({
-            "menu_item_id": str(mi["_id"]), "name": mi["name"],
+            "menu_item_id": item["menu_item_id"], "name": mi["name"],
             "price": mi["price"], "quantity": qty, "image_url": mi.get("image_url", "")
         })
         total += mi["price"] * qty
@@ -445,7 +457,12 @@ async def list_orders(request: Request, status: Optional[str] = None):
             query["status"] = {"$in": ["placed", "accepted", "preparing", "ready", "picked_up"]}
         else:
             query["status"] = status
-    orders = await db.orders.find(query).sort("created_at", -1).to_list(200)
+    orders = await db.orders.find(query, {
+        "customer_id": 1, "customer_name": 1, "kitchen_id": 1, "kitchen_name": 1,
+        "items": 1, "total": 1, "status": 1, "payment_status": 1,
+        "delivery_agent_id": 1, "delivery_agent_name": 1, "delivery_address": 1,
+        "created_at": 1, "updated_at": 1
+    }).sort("created_at", -1).limit(50).to_list(50)
     return [doc_to_dict(o) for o in orders]
 
 @api.get("/orders/{order_id}")
