@@ -21,10 +21,14 @@ db = client[os.environ['DB_NAME']]
 
 app = FastAPI()
 
-frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+cors_origins_raw = os.environ.get("CORS_ORIGINS", "*")
+if cors_origins_raw == "*":
+    cors_origins = [os.environ.get("FRONTEND_URL", "http://localhost:3000")]
+else:
+    cors_origins = [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[frontend_url, "http://localhost:3000"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
